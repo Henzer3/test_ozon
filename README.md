@@ -41,6 +41,7 @@ make test
 Примеры запросов:
 
 Регистрация:
+
 curl -i \
   -X POST http://localhost:28080/api/register \
   -H "Content-Type: application/json" \
