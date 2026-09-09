@@ -41,6 +41,7 @@ make test
 # Примеры запросов:
 
 ## Регистрация:
+
 ```bash
 curl -i \
   -X POST http://localhost:28080/api/register \
@@ -50,21 +51,27 @@ curl -i \
 
 ## Получение токена:
 
+```bash
 curl -i \
   -X POST http://localhost:28080/api/login \
   -H "Content-Type: application/json" \
   -d '{"name":"test@example.com","password":"password123"}'
+```
 
 копируем токен и уже на GraphQL Playground вставляем в Headers:
+
+```bash
 {
   "Authorization": "Token ваш_токен"
 }
+```
 
 Токен действует 1 час, можно не волноваться, что истечет.
 
 
 ## создание поста: 
 
+```bash
 mutation {
   createPost(
     input: {
@@ -80,10 +87,11 @@ mutation {
     commentsEnabled
   }
 }
-
+```
 
 ## создание комментария:
 
+```bash
 mutation {
   createComment(
     input: {
@@ -97,9 +105,11 @@ mutation {
     content
   }
 }
+```
 
 ## создание ответа:
 
+```bash
 mutation {
   createComment(
     input: {
@@ -113,11 +123,13 @@ mutation {
     content
   }
 }
+```
 
 ## просмотр поста и комментариев:
 
 first - сколько корневых комментариев выдать, по умолчанию 20
 
+```bash
 query {
   post(id: "1") {
     id
@@ -138,11 +150,13 @@ query {
     }
   }
 }
+```
 
 ## следущая пачка комментариев:
 
 after - метка для пагинации, берется из ответа на прошлый запрос
 
+```bash
 query {
   post(id: "1") {
     id
@@ -163,6 +177,7 @@ query {
     }
   }
 }
+```
 
 
 
