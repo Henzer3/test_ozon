@@ -33,12 +33,6 @@ generate-proto:
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		pkg/sso/sso.proto
 
-run-post:
-	go -C post-service run ./cmd/app
-
-run-sso:
-	go -C sso run .
-
 unit-test:
 	go test ./post-service/...
 	go test ./sso/...

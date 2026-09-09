@@ -22,7 +22,7 @@ import (
 )
 
 func Run(logger *slog.Logger, cfg config.Config) error {
-	// создать дб адаптер
+	// creating storage
 	storage, err := repository.New(logger, cfg.DBAddress)
 	if err != nil {
 		logger.Error("error creating postgres storage", "error", err)
@@ -35,6 +35,7 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 		}
 	}()
 
+	// migrate
 	if err := storage.Migrate(); err != nil {
 		logger.Error("migrate error", "error", err)
 		return err
@@ -53,9 +54,7 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 		}
 	}()
 
-	// создать postService
-	// создать CommentService
-	// передать их в резолвер
+	// creating service
 
 	service := post.New(logger, storage, storage)
 
@@ -107,7 +106,6 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 		return err
 	}
 
-	// Make sure the program doesn't exit and waits instead for Shutdown to return.
 	if err = <-chanError; err != nil {
 		logger.Debug("hard stop server", "err", err)
 		return err
