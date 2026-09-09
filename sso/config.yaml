@@ -1,0 +1,6 @@
+env: "local"
+log_level: DEBUG
+token_ttl: 1h
+grpc:
+  sso_address: 44044
+  timeout: 10h

@@ -1,0 +1,25 @@
+schema:
+  - internal/transport/graphql/*.graphqls
+
+exec:
+  filename: internal/transport/graphql/generated.go
+  package: graphql
+
+model:
+  filename: internal/transport/graphql/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: internal/transport/graphql
+  package: graphql
+  filename_template: "{name}.resolvers.go"
+
+models:
+  ID:
+    model:
+      - github.com/99designs/gqlgen/graphql.ID
+  Post:
+    fields:
+      comments:
+        resolver: true

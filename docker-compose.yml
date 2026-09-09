@@ -1,0 +1,97 @@
+services:
+  post-service:
+    build:
+      context: .
+      dockerfile: post-service/Dockerfile
+    container_name: post-service
+    restart: unless-stopped
+    ports:
+      - "28080:8080"
+    volumes:
+      - ./post-service/config.yaml:/app/config.yaml:ro
+    environment:
+      LOG_LEVEL: DEBUG
+      DB_ADDRESS: postgres://postgres:password@postgres:5432/postgres?sslmode=disable
+      APP_ID: "1"
+      SSO_ADDRESS: sso:8081
+      API_ADDRESS: :8080
+      API_TIMEOUT: 5s
+      GRACEFUL_SHUTDOWN_TIME: 3s
+    depends_on:
+      sso:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  sso:
+    image: sso:latest
+    build:
+      context: .
+      dockerfile: sso/Dockerfile
+    container_name: sso
+    restart: unless-stopped
+    ports:
+      - "28084:8081"
+    environment:
+      - SSO_ADDRESS=:8081
+      - DB_ADDRESS=postgres://postgres:password@postgres:5432/postgres
+      - TOKEN_TTL=1h
+      - SSO_APP_ID=1
+      - SSO_APP_NAME=post
+      - SSO_APP_SECRET=some-secret
+
+      - SSO_ADMIN_EMAIL=admin
+      - SSO_ADMIN_PASSWORD=password
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tests:
+    image: tests:latest
+    build: tests
+    container_name: tests
+    restart: "no"
+    entrypoint: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      post-service:
+        condition: service_started
+      sso:
+        condition: service_started
+
+  postgres:
+    image: postgres:18
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "postgres", "-d", "postgres" ]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin4
+    restart: unless-stopped
+    ports:
+      - "18888:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@tests.com
+      PGADMIN_DEFAULT_PASSWORD: password
+      PGADMIN_DISABLE_POSTFIX: "true"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
+volumes:
+  postgres:
+  pgadmin:

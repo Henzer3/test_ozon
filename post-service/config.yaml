@@ -1,0 +1,11 @@
+log_level: DEBUG
+db_address: postgres://postgres:password@localhost:5432/postgres?sslmode=disable
+app_id: 1
+
+sso:
+  sso_address: localhost:8081
+
+http:
+  address: :8080
+  timeout: 5s
+  graceful_shutdown_time: 3s
