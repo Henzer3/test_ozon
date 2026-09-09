@@ -35,8 +35,8 @@ make clean
 make test
 ```
 
-Также откроется GraphQL Playground  по адресу `http://localhost:8080/`, endpoint API —
-`http://localhost:8080/query`, в котором можно самому отправлять запросы.
+Также откроется GraphQL Playground  по адресу `http://localhost:28080/`, endpoint API —
+`http://localhost:28080/query`, в котором можно самому отправлять запросы.
 
 # Примеры запросов:
 
