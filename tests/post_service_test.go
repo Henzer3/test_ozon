@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,13 +48,10 @@ type postTestCommentConnection struct {
 	PageInfo postTestPageInfo  `json:"pageInfo"`
 }
 
-func TestPostService(t *testing.T) {
-	userA := "post-user-a-@example.com"
-	userB := "post-user-b-@example.com"
-	password := "password123"
-
-	tokenA := postTestRegisterAndLogin(t, userA, password)
-	tokenB := postTestRegisterAndLogin(t, userB, password)
+func TestCreatePostsDifferentUsers(t *testing.T) {
+	const password = "password123"
+	tokenA := postTestRegisterAndLogin(t, "posts-user-a@example.com", password)
+	tokenB := postTestRegisterAndLogin(t, "posts-user-b@example.com", password)
 
 	postA := postTestCreatePost(t, tokenA, "First user post", "Content from first user")
 	postB := postTestCreatePost(t, tokenB, "Second user post", "Content from second user")
@@ -75,41 +73,78 @@ func TestPostService(t *testing.T) {
 	require.Contains(t, postsByID, postB.ID)
 	require.Equal(t, postA.AuthorID, postsByID[postA.ID].AuthorID)
 	require.Equal(t, postB.AuthorID, postsByID[postB.ID].AuthorID)
+}
 
-	rootOne := postTestCreateComment(t, tokenB, postA.ID, nil, "Root comment from second user")
-	rootTwo := postTestCreateComment(t, tokenA, postA.ID, nil, "Root comment from first user")
-	rootThree := postTestCreateComment(t, tokenB, postA.ID, nil, "Another root comment from second user")
-	reply := postTestCreateComment(t, tokenA, postA.ID, &rootOne.ID, "Reply from first user")
+func TestCreateCommentsDifferentUsers(t *testing.T) {
+	const password = "password123"
+	tokenA := postTestRegisterAndLogin(t, "comments-user-a@example.com", password)
+	tokenB := postTestRegisterAndLogin(t, "comments-user-b@example.com", password)
+	post := postTestCreatePost(t, tokenA, "Post for comments", "Content")
 
-	require.Equal(t, postA.ID, rootOne.PostID)
-	require.Equal(t, postB.AuthorID, rootOne.AuthorID)
-	require.Equal(t, postA.AuthorID, rootTwo.AuthorID)
-	require.Equal(t, postB.AuthorID, rootThree.AuthorID)
+	commentA := postTestCreateComment(t, tokenA, post.ID, nil, "Comment from first user")
+	commentB := postTestCreateComment(t, tokenB, post.ID, nil, "Comment from second user")
+
+	require.Equal(t, post.ID, commentA.PostID)
+	require.Equal(t, post.ID, commentB.PostID)
+	require.Equal(t, post.AuthorID, commentA.AuthorID)
+	require.NotEqual(t, commentA.AuthorID, commentB.AuthorID)
+	require.NotEqual(t, commentA.ID, commentB.ID)
+}
+
+func TestCommentReplies(t *testing.T) {
+	const password = "password123"
+	tokenA := postTestRegisterAndLogin(t, "replies-user-a@example.com", password)
+	tokenB := postTestRegisterAndLogin(t, "replies-user-b@example.com", password)
+	post := postTestCreatePost(t, tokenA, "Post for replies", "Content")
+	root := postTestCreateComment(t, tokenB, post.ID, nil, "Root comment")
+	reply := postTestCreateComment(t, tokenA, post.ID, &root.ID, "Reply to root comment")
+
 	require.NotNil(t, reply.ParentID)
-	require.Equal(t, rootOne.ID, *reply.ParentID)
-	require.Equal(t, postA.AuthorID, reply.AuthorID)
+	require.Equal(t, root.ID, *reply.ParentID)
+	require.Equal(t, post.AuthorID, reply.AuthorID)
 
-	firstPage := postTestGetCommentsPage(t, tokenA, postA.ID, 2, nil)
+	page := postTestGetCommentsPage(t, tokenA, post.ID, 20, nil)
+	require.Len(t, page.Nodes, 1)
+	require.Equal(t, root.ID, page.Nodes[0].ID)
+	require.Len(t, page.Nodes[0].Replies, 1)
+	require.Equal(t, reply.ID, page.Nodes[0].Replies[0].ID)
+	require.NotNil(t, page.Nodes[0].Replies[0].ParentID)
+	require.Equal(t, root.ID, *page.Nodes[0].Replies[0].ParentID)
+}
+
+func TestCommentsPagination(t *testing.T) {
+	const password = "password123"
+	token := postTestRegisterAndLogin(t, "pagination-user@example.com", password)
+	post := postTestCreatePost(t, token, "Post for pagination", "Content")
+	rootOne := postTestCreateComment(t, token, post.ID, nil, "First root comment")
+	rootTwo := postTestCreateComment(t, token, post.ID, nil, "Second root comment")
+	rootThree := postTestCreateComment(t, token, post.ID, nil, "Third root comment")
+
+	firstPage := postTestGetCommentsPage(t, token, post.ID, 2, nil)
 	require.Len(t, firstPage.Nodes, 2)
 	require.Equal(t, rootThree.ID, firstPage.Nodes[0].ID)
 	require.Equal(t, rootTwo.ID, firstPage.Nodes[1].ID)
 	require.True(t, firstPage.PageInfo.HasNextPage)
 	require.NotNil(t, firstPage.PageInfo.EndCursor)
 
-	secondPage := postTestGetCommentsPage(t, tokenA, postA.ID, 2, firstPage.PageInfo.EndCursor)
+	secondPage := postTestGetCommentsPage(t, token, post.ID, 2, firstPage.PageInfo.EndCursor)
 	require.Len(t, secondPage.Nodes, 1)
 	require.Equal(t, rootOne.ID, secondPage.Nodes[0].ID)
 	require.False(t, secondPage.PageInfo.HasNextPage)
 	require.NotNil(t, secondPage.PageInfo.EndCursor)
-	require.Len(t, secondPage.Nodes[0].Replies, 1)
-	require.Equal(t, reply.ID, secondPage.Nodes[0].Replies[0].ID)
-	require.NotNil(t, secondPage.Nodes[0].Replies[0].ParentID)
-	require.Equal(t, rootOne.ID, *secondPage.Nodes[0].Replies[0].ParentID)
 
-	emptyPage := postTestGetCommentsPage(t, tokenA, postA.ID, 2, secondPage.PageInfo.EndCursor)
+	emptyPage := postTestGetCommentsPage(t, token, post.ID, 2, secondPage.PageInfo.EndCursor)
 	require.Empty(t, emptyPage.Nodes)
 	require.False(t, emptyPage.PageInfo.HasNextPage)
 	require.Nil(t, emptyPage.PageInfo.EndCursor)
+}
+
+func TestCreateCommentTooLong(t *testing.T) {
+	const password = "password123"
+	token := postTestRegisterAndLogin(t, "long-comment-user@example.com", password)
+	post := postTestCreatePost(t, token, "Post for long comment", "Content")
+
+	postTestCreateTooLongComment(t, token, post.ID)
 }
 
 func postTestRegisterAndLogin(t *testing.T, name, password string) string {
@@ -244,6 +279,51 @@ func postTestCreateComment(
 	postTestDoGraphQL(t, token, query, map[string]any{"input": input}, &data)
 
 	return data.CreateComment
+}
+
+func postTestCreateTooLongComment(t *testing.T, token, postID string) {
+	t.Helper()
+
+	const query = `
+		mutation CreateComment($input: CreateCommentInput!) {
+			createComment(input: $input) {
+				id
+			}
+		}
+	`
+
+	payload, err := json.Marshal(map[string]any{
+		"query": query,
+		"variables": map[string]any{
+			"input": map[string]any{
+				"postID":  postID,
+				"content": strings.Repeat("я", 2001),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		address+"/query",
+		bytes.NewReader(payload),
+	)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Token "+token)
+
+	response, err := client.Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode, "response body: %s", body)
+
+	var result postTestGraphQLResponse
+	require.NoError(t, json.Unmarshal(body, &result), "response body: %s", body)
+	require.Len(t, result.Errors, 1, "response body: %s", body)
+	require.Equal(t, "COMMENT_TOO_LONG", result.Errors[0].Extensions["code"])
 }
 
 func postTestGetCommentsPage(
