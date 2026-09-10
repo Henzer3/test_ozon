@@ -21,14 +21,30 @@ type commentRepository interface {
 	GetComment(ctx context.Context, id int64) (entity.Comment, error)
 }
 
+type commentBroker interface {
+	Publish(comment entity.Comment)
+	Subscribe(ctx context.Context, postID int64) <-chan entity.Comment
+}
+
 type Service struct {
 	log               *slog.Logger
 	postRepository    postRepository
 	commentRepository commentRepository
+	commentBroker     commentBroker
 }
 
-func New(log *slog.Logger, postRepository postRepository, commentRepository commentRepository) *Service {
-	return &Service{log: log, postRepository: postRepository, commentRepository: commentRepository}
+func New(
+	log *slog.Logger,
+	postRepository postRepository,
+	commentRepository commentRepository,
+	commentBroker commentBroker,
+) *Service {
+	return &Service{
+		log:               log,
+		postRepository:    postRepository,
+		commentRepository: commentRepository,
+		commentBroker:     commentBroker,
+	}
 }
 
 func (s *Service) CreatePost(ctx context.Context, input port.CreatePostInput) (entity.Post, error) {
@@ -101,7 +117,26 @@ func (s *Service) CreateComment(ctx context.Context, input port.CreateCommentInp
 		return entity.Comment{}, err
 	}
 
+	s.commentBroker.Publish(comment)
+
 	return comment, nil
+}
+
+func (s *Service) SubscribeComments(ctx context.Context, postID int64) (<-chan entity.Comment, error) {
+	post, err := s.postRepository.GetPost(ctx, postID)
+	if err != nil {
+		if errors.Is(err, entity.ErrPostNotFound) {
+			return nil, err
+		}
+		s.log.Error("failed to get post", "error", err)
+		return nil, err
+	}
+
+	if !post.CommentsEnabled {
+		return nil, entity.ErrCommentsDisabled
+	}
+
+	return s.commentBroker.Subscribe(ctx, postID), nil
 }
 
 func (s *Service) Comments(ctx context.Context, input port.CommentPageInput) (entity.CommentPage, error) {

@@ -8,6 +8,10 @@ type Mutation {
     createComment(input: CreateCommentInput!): Comment!
 }
 
+type Subscription {
+    commentAdded(postID: ID!): Comment!
+}
+
 type Post {
     id: ID!
     authorID: ID!

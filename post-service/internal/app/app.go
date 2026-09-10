@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/Henzer3/test-ozon/post-service/internal/config"
 	"github.com/Henzer3/test-ozon/post-service/internal/repository"
+	"github.com/Henzer3/test-ozon/post-service/internal/subscription"
 	ssoClient "github.com/Henzer3/test-ozon/post-service/internal/transport/adapters/sso"
 	graphqlapi "github.com/Henzer3/test-ozon/post-service/internal/transport/graphql"
 	"github.com/Henzer3/test-ozon/post-service/internal/transport/rest"
@@ -56,7 +58,8 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 
 	// creating service
 
-	service := post.New(logger, storage, storage)
+	commentBroker := subscription.NewBroker()
+	service := post.New(logger, storage, storage, commentBroker)
 
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -64,14 +67,19 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 	graphqlServer := handler.New(
 		graphqlapi.NewExecutableSchema(graphqlapi.Config{
 			Resolvers: &graphqlapi.Resolver{
-				PostService:    service,
-				CommentService: service,
+				PostService:         service,
+				CommentService:      service,
+				SubscriptionService: service,
 			},
 		}),
 	)
 
+	graphqlServer.AddTransport(transport.Websocket{
+		InitFunc:         middleware.WebsocketInit(ssoClient),
+		InitTimeout:      5 * time.Second,
+		PingPongInterval: 15 * time.Second,
+	})
 	graphqlServer.AddTransport(transport.Options{})
-	graphqlServer.AddTransport(transport.GET{})
 	graphqlServer.AddTransport(transport.POST{})
 
 	router.GET("/", gin.WrapH(
@@ -79,6 +87,8 @@ func Run(logger *slog.Logger, cfg config.Config) error {
 	))
 
 	router.POST("/query", middleware.Auth(ssoClient), gin.WrapH(graphqlServer))
+	router.GET("/query", gin.WrapH(graphqlServer))
+	router.OPTIONS("/query", gin.WrapH(graphqlServer))
 	router.POST("/api/login", rest.NewLoginHandler(logger, ssoClient, int32(cfg.AppID)))
 	router.POST("/api/register", rest.NewRegisterHandler(logger, ssoClient))
 

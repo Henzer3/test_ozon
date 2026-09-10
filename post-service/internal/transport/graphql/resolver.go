@@ -27,15 +27,25 @@ type CommentService interface {
 	Comments(ctx context.Context, input port.CommentPageInput) (entity.CommentPage, error)
 }
 
-type Resolver struct {
-	PostService    PostService
-	CommentService CommentService
+type SubscriptionService interface {
+	SubscribeComments(ctx context.Context, postID int64) (<-chan entity.Comment, error)
 }
 
-func NewResolver(postService PostService, commentService CommentService) *Resolver {
+type Resolver struct {
+	PostService         PostService
+	CommentService      CommentService
+	SubscriptionService SubscriptionService
+}
+
+func NewResolver(
+	postService PostService,
+	commentService CommentService,
+	subscriptionService SubscriptionService,
+) *Resolver {
 	return &Resolver{
-		PostService:    postService,
-		CommentService: commentService,
+		PostService:         postService,
+		CommentService:      commentService,
+		SubscriptionService: subscriptionService,
 	}
 }
 
@@ -150,6 +160,37 @@ func (r *Resolver) Comments(ctx context.Context, postID int64, first int, after 
 			HasNextPage: page.HasNextPage,
 		},
 	}, nil
+}
+
+func (r *Resolver) SubscribeComments(ctx context.Context, postID int64) (<-chan *model.Comment, error) {
+	events, err := r.SubscriptionService.SubscribeComments(ctx, postID)
+	if err != nil {
+		return nil, convertor.ConvertError(err)
+	}
+
+	result := make(chan *model.Comment, 1)
+	go func() {
+		defer close(result)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case comment, ok := <-events:
+				if !ok {
+					return
+				}
+
+				select {
+				case result <- commentToModel(comment):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return result, nil
 }
 
 func postToModel(post entity.Post) *model.Post {

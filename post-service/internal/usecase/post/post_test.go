@@ -216,6 +216,73 @@ func TestCreateComment(t *testing.T) {
 	})
 }
 
+func TestCreateCommentPublishesAfterSave(t *testing.T) {
+	ctx := context.Background()
+	input := port.CreateCommentInput{AuthorID: 2, PostID: 10, Content: "comment"}
+	post := entity.Post{ID: 10, CommentsEnabled: true}
+	comment := entity.Comment{ID: 20, PostID: 10, AuthorID: 2, Content: "comment"}
+	service, posts, comments, broker := newServiceWithBrokerMock(t)
+
+	gomock.InOrder(
+		posts.EXPECT().GetPost(ctx, input.PostID).Return(post, nil),
+		comments.EXPECT().CreateComment(ctx, input).Return(comment, nil),
+		broker.EXPECT().Publish(comment),
+	)
+
+	result, err := service.CreateComment(ctx, input)
+
+	require.NoError(t, err)
+	require.Equal(t, comment, result)
+}
+
+func TestSubscribeComments(t *testing.T) {
+	ctx := context.Background()
+	const postID int64 = 10
+
+	t.Run("success", func(t *testing.T) {
+		service, posts, _, broker := newServiceWithBrokerMock(t)
+		events := make(chan entity.Comment)
+		posts.EXPECT().GetPost(ctx, postID).Return(entity.Post{ID: postID, CommentsEnabled: true}, nil)
+		broker.EXPECT().Subscribe(ctx, postID).Return((<-chan entity.Comment)(events))
+
+		result, err := service.SubscribeComments(ctx, postID)
+
+		require.NoError(t, err)
+		require.Equal(t, (<-chan entity.Comment)(events), result)
+	})
+
+	t.Run("post not found", func(t *testing.T) {
+		service, posts, _, _ := newServiceWithBrokerMock(t)
+		posts.EXPECT().GetPost(ctx, postID).Return(entity.Post{}, entity.ErrPostNotFound)
+
+		result, err := service.SubscribeComments(ctx, postID)
+
+		require.ErrorIs(t, err, entity.ErrPostNotFound)
+		require.Nil(t, result)
+	})
+
+	t.Run("comments disabled", func(t *testing.T) {
+		service, posts, _, _ := newServiceWithBrokerMock(t)
+		posts.EXPECT().GetPost(ctx, postID).Return(entity.Post{ID: postID, CommentsEnabled: false}, nil)
+
+		result, err := service.SubscribeComments(ctx, postID)
+
+		require.ErrorIs(t, err, entity.ErrCommentsDisabled)
+		require.Nil(t, result)
+	})
+
+	t.Run("repository error", func(t *testing.T) {
+		service, posts, _, _ := newServiceWithBrokerMock(t)
+		wantErr := errors.New("get post failed")
+		posts.EXPECT().GetPost(ctx, postID).Return(entity.Post{}, wantErr)
+
+		result, err := service.SubscribeComments(ctx, postID)
+
+		require.ErrorIs(t, err, wantErr)
+		require.Nil(t, result)
+	})
+}
+
 func TestComments(t *testing.T) {
 	ctx := context.Background()
 	afterID := int64(30)
@@ -272,11 +339,22 @@ func TestComments(t *testing.T) {
 
 func newServiceWithMocks(t *testing.T) (*Service, *postmock.MockpostRepository, *postmock.MockcommentRepository) {
 	t.Helper()
+	service, posts, comments, broker := newServiceWithBrokerMock(t)
+	broker.EXPECT().Publish(gomock.Any()).AnyTimes()
+
+	return service, posts, comments
+}
+
+func newServiceWithBrokerMock(
+	t *testing.T,
+) (*Service, *postmock.MockpostRepository, *postmock.MockcommentRepository, *postmock.MockcommentBroker) {
+	t.Helper()
 
 	controller := gomock.NewController(t)
 	posts := postmock.NewMockpostRepository(controller)
 	comments := postmock.NewMockcommentRepository(controller)
+	broker := postmock.NewMockcommentBroker(controller)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	return New(logger, posts, comments), posts, comments
+	return New(logger, posts, comments, broker), posts, comments, broker
 }

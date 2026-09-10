@@ -208,6 +208,63 @@ func TestComments(t *testing.T) {
 	})
 }
 
+func TestSubscribeComments(t *testing.T) {
+	t.Run("invalid post ID", func(t *testing.T) {
+		resolver, _, _, _ := newResolverWithSubscriptionMock(t)
+
+		events, err := resolver.Subscription().CommentAdded(context.Background(), "invalid")
+
+		require.Nil(t, events)
+		requireGraphQLErrorCode(t, err, "BAD_USER_INPUT")
+	})
+
+	t.Run("service error", func(t *testing.T) {
+		resolver, _, _, subscriptions := newResolverWithSubscriptionMock(t)
+		subscriptions.EXPECT().SubscribeComments(gomock.Any(), int64(10)).Return(nil, entity.ErrPostNotFound)
+
+		events, err := resolver.Subscription().CommentAdded(context.Background(), "10")
+
+		require.Nil(t, events)
+		requireGraphQLErrorCode(t, err, "POST_NOT_FOUND")
+	})
+
+	t.Run("forwards comments and stops with context", func(t *testing.T) {
+		resolver, _, _, subscriptions := newResolverWithSubscriptionMock(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		source := make(chan entity.Comment, 1)
+		parentID := int64(7)
+		want := entity.Comment{ID: 8, PostID: 10, ParentID: &parentID, AuthorID: 3, Content: "new comment"}
+		subscriptions.EXPECT().SubscribeComments(ctx, int64(10)).Return((<-chan entity.Comment)(source), nil)
+
+		events, err := resolver.Subscription().CommentAdded(ctx, "10")
+		require.NoError(t, err)
+
+		source <- want
+		received := <-events
+		require.Equal(t, "8", received.ID)
+		require.Equal(t, "10", received.PostID)
+		require.Equal(t, "7", *received.ParentID)
+		require.Equal(t, "3", received.AuthorID)
+		require.Equal(t, want.Content, received.Content)
+
+		cancel()
+		_, open := <-events
+		require.False(t, open)
+	})
+
+	t.Run("stops when broker channel closes", func(t *testing.T) {
+		resolver, _, _, subscriptions := newResolverWithSubscriptionMock(t)
+		source := make(chan entity.Comment)
+		close(source)
+		subscriptions.EXPECT().SubscribeComments(gomock.Any(), int64(10)).Return((<-chan entity.Comment)(source), nil)
+
+		events, err := resolver.SubscribeComments(context.Background(), 10)
+		require.NoError(t, err)
+		_, open := <-events
+		require.False(t, open)
+	})
+}
+
 func TestCursorHelpers(t *testing.T) {
 	id := int64(42)
 	cursor := encodeCursor(&id)
@@ -228,10 +285,19 @@ func TestCursorHelpers(t *testing.T) {
 
 func newResolverWithMocks(t *testing.T) (*Resolver, *graphqlmock.MockPostService, *graphqlmock.MockCommentService) {
 	t.Helper()
+	resolver, posts, comments, _ := newResolverWithSubscriptionMock(t)
+	return resolver, posts, comments
+}
+
+func newResolverWithSubscriptionMock(
+	t *testing.T,
+) (*Resolver, *graphqlmock.MockPostService, *graphqlmock.MockCommentService, *graphqlmock.MockSubscriptionService) {
+	t.Helper()
 	controller := gomock.NewController(t)
 	posts := graphqlmock.NewMockPostService(controller)
 	comments := graphqlmock.NewMockCommentService(controller)
-	return NewResolver(posts, comments), posts, comments
+	subscriptions := graphqlmock.NewMockSubscriptionService(controller)
+	return NewResolver(posts, comments, subscriptions), posts, comments, subscriptions
 }
 
 func requireGraphQLErrorCode(t *testing.T, err error, code string) {
